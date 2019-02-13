@@ -1,0 +1,97 @@
+---
+title: "Weight_Lifting_Prediction"
+author: "Jamazi"
+date: "2/12/2019"
+output:
+  html_document:
+    keep_md: yes
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret)
+```
+
+## Summary
+
+We built a model to predict whether someone was doing a barbell lift correctly based on data from a gyroscopic fitness device. We used training data which had five categories of barbell lifting corresponding to correct and incorrect form. First we read in the training data and remove variables with a high number of NA values:
+
+
+```{r readin, echo=TRUE}
+wd <- paste(getwd(),"/pml-training.csv", sep="")
+pml <- read.csv(file=wd, header=TRUE, na.strings=c("", "NA"))
+
+remove <- 1:7
+for (i in 1:ncol(pml)) {
+    if (sum(is.na(pml[,i]))>5000 )  {
+        remove <- c(remove, i)
+    }
+}
+pml <- pml[,-remove]
+```
+
+Next we remove variables ending in "x", "y", and "z" because they are likely summarized by other variables. Then we separate our training data into "training", "testing", and "validation" sets.
+
+```{r partition, echo=TRUE}
+remove2 <- grep(pattern = "x|y|z", x=names(pml))
+pml <- pml[,-remove2]
+
+set.seed(1234)
+inBuild <- createDataPartition(y=pml$classe, p=0.7, list=FALSE)
+
+validation <- pml[-inBuild,]
+buildData <- pml[inBuild,]
+
+inTrain <- createDataPartition(y=buildData$classe, p=0.7, list=FALSE)
+training <- buildData[inTrain,]
+testing <- buildData[-inTrain,]
+
+dim(training); dim(testing); dim(validation)
+```
+
+We see that each of our data sets has thousands of entries, so they should be large enough to build and test robust training models. This method of separating our training data into sections against which we can test our prediction models is called cross-validation.
+
+## Creating Prediction Models
+
+We're going to create three different prediction models and combine them to increase the accuracy of our predictions. We use the random forrest (rf), gradient boosting machine (gbm), and linear discriminant analysis and combine the results to extract the benefits of each. 
+
+```{r train, echo=TRUE, message=FALSE, warning=FALSE, cache=TRUE}
+#use decision tree model as a predictor
+library(caret)
+modFit <- train(classe ~., method="rf", data=training, preProcess="pca")
+rfPred <- predict(modFit, testing)
+#results in ~90% accuracy
+
+#use boosting model as a predictor
+library(ISLR)
+modFit2 <- train(classe~., method="gbm", data=training, verbose=FALSE)
+bPred <- predict(modFit2, testing)
+#results in ~90% accuracy
+
+#use lda model as a predictor
+modFit3 <- train(classe~., method="lda", data=training)
+LDApred <- predict(modFit3, testing)
+#results in ~43% accuracy
+```
+
+Our three models predicted the type of exercise of our testing subset with 90%, 90%, and 43% accuracy respectively. Using just the first or second method would be okay, but we'll try to do better by stacking these models, training them on our testing subset, and testing them on our validation subset.
+
+```{r stack, echo=TRUE, cache=TRUE}
+#combine predictors and train based on test set
+predDF <- data.frame(rfPred, bPred, LDApred, classe=testing$classe)
+combModFit <- train(classe~., method="rf", data=predDF)
+combPred <- predict(combModFit, predDF)
+#results in 94.4% accuracy
+
+#predict on validation set
+pred1V <- predict(modFit, validation)
+pred2V <- predict(modFit2, validation)
+pred3V <- predict(modFit3, validation)
+predVDF <- data.frame(rfPred=pred1V, bPred=pred2V, LDApred=pred3V)
+combPredV <- predict(combModFit, predVDF)
+confusionMatrix(combPredV, validation$classe)
+#results in 93.7% accuracy
+```
+
+We combined our prediction models and trained a random forrest model based on their combined predictions to build a combined model. This combined model was able to predict the type of exercise in our validation subset with 93.7% accuracy. 
